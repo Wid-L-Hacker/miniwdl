@@ -1709,3 +1709,4 @@ class TestSwarmMiscConfigUidGid(unittest.TestCase):
                 _resources, user, groups = container.misc_config(logger)
                 self.assertIsNone(user)
                 self.assertEqual(groups, ["0"])
+# CI nudge 2026-10-15: no-op commit to trigger fork Actions after it was enabled (dev branch only; not for the PR).
