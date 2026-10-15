@@ -1,0 +1,70 @@
+# dev-fast.yml — fast-iteration test runner for this fork (Wid-L-Hacker/miniwdl).
+# Lives on the fork-only `infra/dev-fast` branch (file added via web UI —
+# the Muse GitHub App can't push workflow files). dev/** branches are cut
+# from infra/dev-fast so pushes auto-trigger this. Never merge into main
+# or into a PR branch.
+name: dev-fast
+
+on:
+  push:
+    branches: ['dev/**']
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'Test command to run inside the test container (overrides FAST_RUN)'
+        required: false
+        default: ''
+
+# Rapid pushes cancel the superseded run: signal always on the latest commit.
+concurrency:
+  group: dev-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Default test command for push-triggered runs.
+  # Targeting guidance (Mike, 2026-10-15): `make qtest` is a long pole — the
+  # default iteration loop should target narrowly: the single test file or
+  # -k expression that covers the change. `make qtest` is a PRE-PR GATE,
+  # not an iteration tool. Pick the narrowest selection that exercises the
+  # change first; widen only when you need confidence in neighbors.
+  #
+  # Examples:
+  #   pytest -vx --tb=short -n auto tests/test_4taskrun.py -k 'container'
+  #   pytest -vx --tb=short -n auto tests/test_5stdlib.py -k 'TestStdLibString'
+  #   prove -v tests/runner.t
+  #   make ci_housekeeping   (pre-PR lint gate: ruff + mypy + sphinx)
+  #   make qtest              (pre-PR gate only — "several minutes")
+  #   make integration_tests  (prove over check/eval/runner/zip/multi_line_strings.t)
+  FAST_RUN: pytest -vx --tb=short -n auto tests/test_4taskrun.py -k 'container'
+
+jobs:
+  fast:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: docker build (buildx layer cache via Actions cache)
+        run: |
+          docker buildx build -t miniwdl_fast:latest --load \
+            --cache-from type=gha,scope=dev-fast \
+            --cache-to type=gha,mode=max,scope=dev-fast \
+            . \
+          || docker build -t miniwdl_fast:latest .
+      - name: run selected tests
+        run: |
+          chmod -R ugo+rw .
+          RUN_CMD='${{ inputs.run }}'
+          [ -z "$RUN_CMD" ] && RUN_CMD="$FAST_RUN"
+          echo ">>> running: $RUN_CMD"
+          docker run \
+            --group-add "$(stat -c %g /var/run/docker.sock)" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$(pwd):/home/wdler/miniwdl" -v /tmp:/tmp \
+            -e AWS_EC2_METADATA_DISABLED=true -e CI=true \
+            miniwdl_fast:latest \
+            bash -lc "cd /home/wdler/miniwdl && $RUN_CMD"
