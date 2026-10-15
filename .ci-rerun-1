@@ -1,0 +1,1 @@
+Trigger file: re-running full CI after ci_unit_tests failed once (exit 2) with no attributable cause; viral_assemble was fail-fast collateral. Delete before any PR.
