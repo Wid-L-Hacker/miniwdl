@@ -1,0 +1,175 @@
+# backend-tests.yml — alternate container backend tests (podman /
+# singularity-apptainer) for the miniwdl fork (Wid-L-Hacker/miniwdl).
+#
+# TEMPORARY STAGING (2026-10-16): this file is staged on the
+# dev/backend-tests branch with a TEMPORARY push trigger (see `on:` below)
+# so the alternate backends can be exercised on real GitHub-hosted runners
+# without touching fork main. Before this workflow moves to fork main or
+# anywhere upstream:
+#   * DELETE the push trigger — workflow_dispatch only is the end state.
+#   * (Dispatch only works once the file is on the default branch; while
+#     staged here, the push trigger is what fires it.)
+#
+# Purpose: release-procedure spot checks of the alternate task runtimes,
+# which can't be exercised from the dev sandbox. To activate on the staging
+# branch, this file must sit at .github/workflows/backend-tests.yml in the
+# branch tree; a push to the branch then runs both backend jobs.
+# Placed out-of-band (the Muse GitHub App has no Workflows permission,
+# so the connector can't push .github/workflows/* directly).
+#
+# Inputs (workflow_dispatch; push runs fall back to both/full):
+#   backend: both | podman | singularity
+#   scope:   full     = prove -v tests/<backend>.t (incl. viral assemble_denovo)
+#            selftest = miniwdl run_self_test only (fast backend smoke signal)
+name: backend tests
+
+on:
+  # TEMPORARY push trigger — remove before this file leaves the staging
+  # branch. Push runs use the dispatch defaults via the `|| '…'` fallbacks
+  # in the jobs below (the inputs context is empty on push events).
+  push:
+    branches: [dev/backend-tests]
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: 'Which backend(s) to test'
+        type: choice
+        options: [both, podman, singularity]
+        default: both
+      scope:
+        description: 'full = prove tests/<backend>.t; selftest = run_self_test only'
+        type: choice
+        options: [full, selftest]
+        default: full
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  AWS_EC2_METADATA_DISABLED: "true"
+
+jobs:
+  podman:
+    name: podman
+    if: ${{ (inputs.backend || 'both') != 'singularity' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: probe runner
+        run: |
+          {
+            echo "podman: $(podman --version 2>/dev/null || echo MISSING)"
+            echo "singularity: $(singularity --version 2>/dev/null || apptainer --version 2>/dev/null || echo MISSING)"
+            echo "prove: $(prove --version 2>/dev/null | head -n1 || echo MISSING)"
+            echo "passwordless sudo: $(sudo -n true 2>/dev/null && echo yes || echo NO)"
+            df -h / /tmp | tail -n2
+          } | tee probe.txt
+          if grep -q '^podman: podman version' probe.txt; then
+            echo "::notice title=podman preinstalled::$(grep '^podman:' probe.txt)"
+          else
+            echo "::warning title=podman NOT preinstalled::apt-installing in a later step"
+          fi
+      - name: install miniwdl (host)
+        run: |
+          python3 -m pip install --user -e .
+          python3 -m WDL --version
+      - name: ensure podman + sanity check
+        run: |
+          if ! command -v podman > /dev/null; then
+            echo "::notice title=podman installed via apt::was missing from runner image"
+            sudo apt-get update -qq && sudo apt-get install -y -qq podman
+          fi
+          podman --version
+          sudo -kn podman run --rm ubuntu:22.04 cat /etc/issue
+      - name: run podman tests
+        timeout-minutes: 270
+        run: |
+          if [ "${{ inputs.scope || 'full' }}" = "selftest" ]; then
+            MINIWDL__SCHEDULER__CONTAINER_BACKEND=podman python3 -m WDL run_self_test
+          else
+            prove -v tests/podman.t
+          fi
+      - name: upload run dirs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-run-dirs
+          path: |
+            probe.txt
+            /tmp/miniwdl_runner_tests_*
+          retention-days: 7
+          if-no-files-found: ignore
+
+  singularity:
+    name: singularity (apptainer)
+    if: ${{ (inputs.backend || 'both') != 'podman' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: probe runner
+        run: |
+          {
+            echo "podman: $(podman --version 2>/dev/null || echo MISSING)"
+            echo "singularity: $(singularity --version 2>/dev/null || apptainer --version 2>/dev/null || echo MISSING)"
+            echo "prove: $(prove --version 2>/dev/null | head -n1 || echo MISSING)"
+            echo "passwordless sudo: $(sudo -n true 2>/dev/null && echo yes || echo NO)"
+            df -h / /tmp | tail -n2
+          } | tee probe.txt
+          if grep -q '^singularity: ' probe.txt && ! grep -q '^singularity: MISSING' probe.txt; then
+            echo "::notice title=singularity preinstalled::$(grep '^singularity:' probe.txt)"
+          else
+            echo "::warning title=singularity NOT preinstalled::installing Apptainer in a later step"
+          fi
+      - name: install miniwdl (host)
+        run: |
+          python3 -m pip install --user -e .
+          python3 -m WDL --version
+      - name: ensure singularity (install Apptainer if missing)
+        run: |
+          if ! command -v singularity > /dev/null; then
+            start=$SECONDS
+            rel=$(curl -fsSL https://api.github.com/repos/apptainer/apptainer/releases/latest)
+            tag=$(echo "$rel" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
+            ver=${tag#v}
+            echo "installing Apptainer $tag"
+            # since Apptainer 1.4 the setuid starter ships as a separate deb;
+            # install both so singularity works without user namespaces too
+            curl -fsSL -o /tmp/apptainer.deb \
+              "https://github.com/apptainer/apptainer/releases/download/${tag}/apptainer_${ver}_amd64.deb"
+            curl -fsSL -o /tmp/apptainer-suid.deb \
+              "https://github.com/apptainer/apptainer/releases/download/${tag}/apptainer-suid_${ver}_amd64.deb"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq /tmp/apptainer.deb /tmp/apptainer-suid.deb
+            echo "::notice title=apptainer installed::$tag in $((SECONDS-start))s"
+          fi
+          singularity --version
+      - name: singularity sanity check
+        continue-on-error: true
+        run: singularity run docker://ubuntu:22.04 cat /etc/issue
+      - name: run singularity tests
+        timeout-minutes: 270
+        run: |
+          if [ "${{ inputs.scope || 'full' }}" = "selftest" ]; then
+            MINIWDL__SCHEDULER__CONTAINER_BACKEND=singularity python3 -m WDL run_self_test
+          else
+            prove -v tests/singularity.t
+          fi
+      - name: upload run dirs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: singularity-run-dirs
+          path: |
+            probe.txt
+            /tmp/miniwdl_runner_tests_*
+          retention-days: 7
+          if-no-files-found: ignore
