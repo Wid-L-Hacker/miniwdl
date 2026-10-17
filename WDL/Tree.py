@@ -641,7 +641,9 @@ class Call(WorkflowNode):
                 if callee_doc is doc:
                     raise Error.CircularDependencies(self)
                 if not wf.complete_calls or (wf.outputs is None and wf.effective_outputs):
-                    raise Error.UncallableWorkflow(self, ".".join(self.callee_id))
+                    raise Error.UncallableWorkflow(
+                        self, ".".join(self.callee_id), _uncallable_reasons(wf)
+                    )
                 self.callee = wf
             else:
                 for task in callee_doc.tasks:
@@ -773,6 +775,23 @@ class Call(WorkflowNode):
         yield from self._after_node_ids
         for expr in self.inputs.values():
             yield from _expr_workflow_node_dependencies(expr)
+
+
+class CallTry(Call):
+    """A call whose tolerated runtime failures produce null optional outputs"""
+
+    @property
+    def effective_outputs(self) -> Env.Bindings[Type.Base]:
+        """:type: WDL.Env.Bindings[WDL.Tree.Decl]
+
+        Yields the effective outputs of the callee Task or Workflow, optionalized in a namespace
+        according to the call name.
+        """
+        ans: Env.Bindings[Type.Base] = Env.Bindings()
+        assert self.callee
+        for outp in reversed(list(self.callee.effective_outputs)):
+            ans = ans.bind(self.name + "." + outp.name, outp.value.copy(optional=True), self)
+        return ans
 
 
 class Gather(WorkflowNode):
@@ -1178,6 +1197,19 @@ class Workflow(SourceNode):
                     ans = ans.bind(b.name, b.value)
 
         return ans
+
+    @property
+    def incomplete_calls(self) -> Iterable["Call"]:
+        """:type: Iterable[WDL.Tree.Call]
+
+        Yields the calls in the workflow, including those nested within scatter and conditional
+        sections, which don't supply all of the callee's required inputs. Such inputs must instead
+        be supplied at workflow launch, which means the workflow can't be used as a subworkflow
+        (:attr:`complete_calls` is False).
+        """
+        for c in _calls(self):
+            if c.callee and next(iter(c.required_inputs), None) is not None:
+                yield c
 
     @property
     def effective_outputs(self) -> Env.Bindings[Type.Base]:
@@ -1704,6 +1736,29 @@ def _calls(element: Union[Workflow, WorkflowSection]) -> Generator[Call, None, N
             yield ch
         elif isinstance(ch, WorkflowSection):
             yield from _calls(ch)
+
+
+def _uncallable_reasons(wf: Workflow) -> List[str]:
+    # Explain why wf can't be used as a subworkflow, for Error.UncallableWorkflow
+    reasons = []
+    if wf.outputs is None and wf.effective_outputs:
+        reasons.append("it lacks an output section")
+    # list the offending calls last, since the list itself is delimited by semicolons
+    details = [
+        "({} Ln {} Col {}) call {} missing required input(s) {}".format(
+            c.pos.abspath,
+            c.pos.line,
+            c.pos.column,
+            c.name,
+            ", ".join(b.name[(len(c.name) + 1) :] for b in c.required_inputs),
+        )
+        for c in wf.incomplete_calls
+    ]
+    if details:
+        reasons.append("its own calls have missing required inputs: " + "; ".join(details))
+    elif not wf.complete_calls:
+        reasons.append("its own calls have missing required inputs")
+    return reasons
 
 
 def _resolve_calls(doc: Document) -> None:
