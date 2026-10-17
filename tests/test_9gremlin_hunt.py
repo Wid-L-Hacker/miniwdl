@@ -19,13 +19,14 @@
 # commands (check-run annotations, retrievable via the public API even when
 # job logs are gated).
 #
-# Knobs: GREMLIN_N (default 15), GREMLIN_WORKERS (default 3),
+# Knobs: GREMLIN_N (default 20), GREMLIN_WORKERS (default 3),
 # GREMLIN_FORCE_FLAKE=1 (skip the sentinel plant in iteration 0; test-the-test).
 
 import glob
 import logging
 import multiprocessing
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -37,7 +38,7 @@ import WDL
 import WDL.runtime
 import WDL.runtime.config
 
-HUNT_N = int(os.environ.get("GREMLIN_N", "15"))
+HUNT_N = int(os.environ.get("GREMLIN_N", "20"))
 HUNT_WORKERS = int(os.environ.get("GREMLIN_WORKERS", "3"))
 FORCE_FLAKE = bool(os.environ.get("GREMLIN_FORCE_FLAKE"))
 
@@ -270,8 +271,45 @@ def _emit_annotations(dump):
         print(f"::error title=GREMLIN EVIDENCE {i}/{total}::{chunk}", flush=True)
 
 
+def _fs_stamp_probe() -> str:
+    """Back-to-back file creates: how often does the second file's mtime_ns NOT
+    exceed the first's? A nonzero rate means this filesystem stamps coarsely
+    enough that a file created after a cache envelope can look 'not newer'."""
+    d = tempfile.mkdtemp(prefix="gremlin_probe_")
+    ties = 0
+    trials = 200
+    try:
+        for _ in range(trials):
+            a = os.path.join(d, "a")
+            b = os.path.join(d, "b")
+            with open(a, "w") as f:
+                f.write("{}")
+            with open(b, "w") as f:
+                f.write("go\n")
+            if os.stat(b).st_mtime_ns <= os.stat(a).st_mtime_ns:
+                ties += 1
+            os.remove(a)
+            os.remove(b)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return f"fs stamp probe in {tempfile.gettempdir()}: ties={ties}/{trials}"
+
+
+def _step_summary(line: str) -> None:
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        try:
+            with open(path, "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
+
 class TestGremlinHunt(unittest.TestCase):
     def test_gremlin_hunt(self):
+        probe = _fs_stamp_probe()
+        print(probe, flush=True)
+        _step_summary(f"gremlin hunt: {probe}")
         ctx = multiprocessing.get_context("fork")
         failures = []
         completed = 0
@@ -305,8 +343,11 @@ class TestGremlinHunt(unittest.TestCase):
                     }
                 )
         if failures:
-            dump = "\n\n".join(f["evidence"] for f in failures if f.get("evidence"))
+            dump = probe + "\n\n" + "\n\n".join(
+                f["evidence"] for f in failures if f.get("evidence")
+            )
             print(dump, flush=True)
+            _step_summary(f"gremlin hunt: CAUGHT {len(failures)}/{HUNT_N} (see annotations)")
             _emit_annotations(dump)
             self.fail(
                 f"GREMLIN CAUGHT: {len(failures)}/{HUNT_N} iterations mismatched "
@@ -314,7 +355,8 @@ class TestGremlinHunt(unittest.TestCase):
             )
         msg = f"GREMLIN HUNT CLEAN: {HUNT_N} iterations ({3 * HUNT_N} executions) passed"
         print(msg, flush=True)
-        print(f"::notice title=GREMLIN HUNT::{msg}", flush=True)
+        print(f"::notice title=GREMLIN HUNT::{msg}; {probe}", flush=True)
+        _step_summary(f"gremlin hunt: CLEAN {HUNT_N} iterations; {probe}")
 
 
 if __name__ == "__main__":
