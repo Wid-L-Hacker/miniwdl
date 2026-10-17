@@ -9,30 +9,22 @@ can be abbreviated ``WDL.Document``.
 .. inheritance-diagram:: WDL.Tree
 """
 
-import os
-import errno
-import itertools
 import asyncio
-import hashlib
 import base64
+import errno
+import hashlib
+import itertools
+import os
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Generator, Iterable
 from typing import (
     Any,
-    List,
-    Optional,
-    Dict,
-    Tuple,
-    Union,
-    Iterable,
-    Callable,
-    Generator,
-    Set,
     NamedTuple,
-    Awaitable,
 )
-from abc import ABC, abstractmethod
-from .Error import SourcePosition, SourceNode
-from . import Type, Expr, Env, Error, StdLib, Value, _parser, _util
+
+from . import Env, Error, Expr, StdLib, Type, Value, _parser, _util
 from ._util import WDLVersion, wdl_version_geq
+from .Error import SourceNode, SourcePosition
 
 
 class StructTypeDef(SourceNode):
@@ -45,28 +37,28 @@ class StructTypeDef(SourceNode):
     Name of the struct type (in the current document)
     """
 
-    members: Dict[str, Type.Base]
+    members: dict[str, Type.Base]
     """
-    :type: Dict[str, WDL.Type.Base]
+    :type: dict[str, WDL.Type.Base]
 
     Member names and types
     """
 
-    imported: "Optional[Tuple[Document,StructTypeDef]]"
+    imported: "tuple[Document, StructTypeDef] | None"
     """
-    :type: Optional[Tuple[Document,StructTypeDef]]
+    :type: tuple[Document,StructTypeDef] | None
 
     If this struct is imported from another document, references that document and its definition
     there. The referenced definition might itself be imported from yet another document.
     """
 
-    parameter_meta: Dict[str, Any]
-    """:type: Dict[str,Any]
+    parameter_meta: dict[str, Any]
+    """:type: dict[str,Any]
 
     ``parameter_meta{}`` section as a JSON-like dict"""
 
-    meta: Dict[str, Any]
-    """:type: Dict[str,Any]
+    meta: dict[str, Any]
+    """:type: dict[str,Any]
 
     ``meta{}`` section as a JSON-like dict"""
 
@@ -74,10 +66,10 @@ class StructTypeDef(SourceNode):
         self,
         pos: SourcePosition,
         name: str,
-        members: Dict[str, Type.Base],
-        parameter_meta: Dict[str, Any],
-        meta: Dict[str, Any],
-        imported: "Optional[Tuple[Document,StructTypeDef]]" = None,
+        members: dict[str, Type.Base],
+        parameter_meta: dict[str, Any],
+        meta: dict[str, Any],
+        imported: "tuple[Document, StructTypeDef] | None" = None,
     ) -> None:
         super().__init__(pos)
         self.name = name
@@ -125,7 +117,7 @@ class WorkflowNode(SourceNode, ABC):
     conditional sections or vice versa, this counts the scatters only.
     """
 
-    _memo_workflow_node_dependencies: Optional[Set[str]] = None
+    _memo_workflow_node_dependencies: set[str] | None = None
 
     def __init__(self, workflow_node_id: str, pos: SourcePosition):
         super().__init__(pos)
@@ -133,9 +125,9 @@ class WorkflowNode(SourceNode, ABC):
         self.scatter_depth = 0
 
     @property
-    def workflow_node_dependencies(self) -> Set[str]:
+    def workflow_node_dependencies(self) -> set[str]:
         """
-        :type: Set[str]
+        :type: set[str]
 
         Set of workflow node IDs on which this node depends. Available once workflow has been
         typechecked.
@@ -153,7 +145,7 @@ class WorkflowNode(SourceNode, ABC):
 
     @abstractmethod
     def add_to_type_env(
-        self, struct_types: Env.Bindings[Dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
+        self, struct_types: Env.Bindings[dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
     ) -> Env.Bindings[Type.Base]:
         # typechecking helper -- add this node to the type environment; for sections, this includes
         # everything in the section body as visible outside of the section.
@@ -182,11 +174,11 @@ class Decl(WorkflowNode):
     """Declared value name
 
     :type: str"""
-    expr: Optional[Expr.Base]
-    """:type: Optional[WDL.Expr.Base]
+    expr: Expr.Base | None
+    """:type: WDL.Expr.Base | None
 
     Bound expression, if any"""
-    decor: Dict[str, Any]  # EXPERIMENTAL
+    decor: dict[str, Any]  # EXPERIMENTAL
     ""
 
     def __init__(
@@ -194,7 +186,7 @@ class Decl(WorkflowNode):
         pos: SourcePosition,
         type: Type.Base,
         name: str,
-        expr: Optional[Expr.Base] = None,
+        expr: Expr.Base | None = None,
         id_prefix="decl",
     ) -> None:
         super().__init__(id_prefix + "-" + name, pos)
@@ -205,8 +197,8 @@ class Decl(WorkflowNode):
 
     def __str__(self) -> str:
         if self.expr is None:
-            return "{} {}".format(str(self.type), self.name)
-        return "{} {} = {}".format(str(self.type), self.name, str(self.expr))
+            return f"{self.type!s} {self.name}"
+        return f"{self.type!s} {self.name} = {self.expr!s}"
 
     __repr__ = __str__
 
@@ -218,7 +210,7 @@ class Decl(WorkflowNode):
 
     def add_to_type_env(
         self,
-        struct_types: Env.Bindings[Dict[str, Type.Base]],
+        struct_types: Env.Bindings[dict[str, Type.Base]],
         type_env: Env.Bindings[Type.Base],
         collision_ok: bool = False,
     ) -> Env.Bindings[Type.Base]:
@@ -238,7 +230,7 @@ class Decl(WorkflowNode):
         self,
         type_env: Env.Bindings[Type.Base],
         stdlib: StdLib.Base,
-        struct_types: Env.Bindings[Dict[str, Type.Base]],
+        struct_types: Env.Bindings[dict[str, Type.Base]],
         check_quant: bool = True,
     ) -> None:
         # Infer the expression's type and ensure it checks against the declared
@@ -259,38 +251,38 @@ class Task(SourceNode):
 
     name: str
     """:type: str"""
-    inputs: Optional[List[Decl]]
-    """:type: Optional[List[WDL.Tree.Decl]]
+    inputs: list[Decl] | None
+    """:type: list[WDL.Tree.Decl] | None
 
     Declarations in the ``input{}`` task section, if it's present"""
-    postinputs: List[Decl]
-    """:type: List[WDL.Tree.Decl]
+    postinputs: list[Decl]
+    """:type: list[WDL.Tree.Decl]
 
     Private declarations outside of the ``input{}`` task section"""
     command: Expr.String
     ":type: WDL.Expr.String"
-    outputs: List[Decl]
-    """:type: List[WDL.Tree.Decl]
+    outputs: list[Decl]
+    """:type: list[WDL.Tree.Decl]
 
     Output declarations"""
-    parameter_meta: Dict[str, Any]
-    """:type: Dict[str,Any]
+    parameter_meta: dict[str, Any]
+    """:type: dict[str,Any]
 
     ``parameter_meta{}`` section as a JSON-like dict"""
-    runtime: Dict[str, Expr.Base]
-    """:type: Dict[str,WDL.Expr.Base]
+    runtime: dict[str, Expr.Base]
+    """:type: dict[str,WDL.Expr.Base]
 
     ``runtime{}`` section, with keys and corresponding expressions to be evaluated"""
     # Original task section keyword, either "runtime" or "requirements"
-    runtime_section_name: Optional[str]
-    runtime_section_pos: Optional[SourcePosition]
+    runtime_section_name: str | None
+    runtime_section_pos: SourcePosition | None
     # Source position of the runtime/requirements section, if present
-    requirements: Dict[str, Expr.Base]
-    """:type: Dict[str,WDL.Expr.Base]
+    requirements: dict[str, Expr.Base]
+    """:type: dict[str,WDL.Expr.Base]
 
     ``requirements{}`` section (for WDL 1.2+ tasks; refers to same dict as ``runtime``)"""
-    meta: Dict[str, Any]
-    """:type: Dict[str,Any]
+    meta: dict[str, Any]
+    """:type: dict[str,Any]
 
     ``meta{}`` section as a JSON-like dict"""
 
@@ -304,15 +296,15 @@ class Task(SourceNode):
         self,
         pos: SourcePosition,
         name: str,
-        inputs: Optional[List[Decl]],
-        postinputs: List[Decl],
+        inputs: list[Decl] | None,
+        postinputs: list[Decl],
         command: Expr.String,
-        outputs: List[Decl],
-        parameter_meta: Dict[str, Any],
-        runtime: Dict[str, Expr.Base],
-        meta: Dict[str, Any],
-        runtime_section_name: Optional[str] = None,
-        runtime_section_pos: Optional[SourcePosition] = None,
+        outputs: list[Decl],
+        parameter_meta: dict[str, Any],
+        runtime: dict[str, Expr.Base],
+        meta: dict[str, Any],
+        runtime_section_name: str | None = None,
+        runtime_section_pos: SourcePosition | None = None,
     ) -> None:
         super().__init__(pos)
         self.name = name
@@ -336,7 +328,7 @@ class Task(SourceNode):
         Build the synthetic task runtime info struct type (WDL 1.2+).
         """
 
-        def meta_object_type(d: Dict[str, Any], name_prefix: str) -> Type.StructInstance:
+        def meta_object_type(d: dict[str, Any], name_prefix: str) -> Type.StructInstance:
             meta_json = Expr._meta_value_to_json(d)
             meta_value = Value._infer_from_json(
                 meta_json, struct_types=True, struct_prefix=f"__{name_prefix}"
@@ -429,12 +421,11 @@ class Task(SourceNode):
         yield self.command
         for d in self.outputs:
             yield d
-        for _, ex in self.runtime.items():
-            yield ex
+        yield from self.runtime.values()
 
     def typecheck(
         self,
-        struct_types: Optional[Env.Bindings[Dict[str, Type.Base]]] = None,
+        struct_types: Env.Bindings[dict[str, Type.Base]] | None = None,
         check_quant: bool = True,
     ) -> None:
         struct_types = struct_types or Env.Bindings()
@@ -467,7 +458,7 @@ class Task(SourceNode):
                     )
                 )
             # Typecheck runtime expressions
-            for _, runtime_expr in self.runtime.items():
+            for runtime_expr in self.runtime.values():
                 errors.try1(
                     (
                         lambda runtime_expr: (
@@ -568,9 +559,9 @@ class Task(SourceNode):
 class Call(WorkflowNode):
     """A call (within a workflow) to a task or sub-workflow"""
 
-    callee_id: List[str]
+    callee_id: list[str]
     """
-    :type: List[str]
+    :type: list[str]
 
     The called task; either one string naming a task in the current document, or an import
     namespace and task name.
@@ -579,33 +570,33 @@ class Call(WorkflowNode):
     """:type: string
 
     Call name, defaults to task/workflow name"""
-    after: List[str]
+    after: list[str]
     """:type: string
 
     Call names on which this call depends (even if none of their outputs are used in this call's
     inputs)
     """
-    _after_node_ids: Set[str]
+    _after_node_ids: set[str]
 
-    inputs: Dict[str, Expr.Base]
+    inputs: dict[str, Expr.Base]
     """
-    :type: Dict[str,WDL.Expr.Base]
+    :type: dict[str,WDL.Expr.Base]
 
     Call inputs provided"""
 
-    callee: Optional[Union[Task, "Workflow"]]
+    callee: "Task | Workflow | None"
     """
-    :type: Union[WDL.Tree.Task, WDL.Tree.Workflow]
+    :type: WDL.Tree.Task | WDL.Tree.Workflow
 
     Refers to the ``Task`` or imported ``Workflow`` object to be called (after AST typechecking)"""
 
     def __init__(
         self,
         pos: SourcePosition,
-        callee_id: List[str],
-        alias: Optional[str],
-        inputs: Dict[str, Expr.Base],
-        after: Optional[List[str]] = None,
+        callee_id: list[str],
+        alias: str | None,
+        inputs: dict[str, Expr.Base],
+        after: list[str] | None = None,
     ) -> None:
         assert callee_id
         self.callee_id = callee_id
@@ -613,14 +604,13 @@ class Call(WorkflowNode):
         super().__init__("call-" + self.name, pos)
         self.inputs = inputs
         self.callee = None
-        self.after = after if after is not None else list()
+        self.after = after if after is not None else []
         self._after_node_ids = set()
 
     @property
     def children(self) -> Iterable[SourceNode]:
         """"""
-        for _, ex in self.inputs.items():
-            yield ex
+        yield from self.inputs.values()
 
     def resolve(self, doc: "Document") -> None:
         # Set self.callee to the Task/Workflow being called. Use exactly once
@@ -659,7 +649,7 @@ class Call(WorkflowNode):
         assert isinstance(self.callee, (Task, Workflow))
 
     def add_to_type_env(
-        self, struct_types: Env.Bindings[Dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
+        self, struct_types: Env.Bindings[dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
     ) -> Env.Bindings[Type.Base]:
         # Add the call's outputs to the type environment under the appropriate
         # namespace, after checking for namespace collisions.
@@ -669,9 +659,7 @@ class Call(WorkflowNode):
         if type_env.has_namespace(self.name):
             raise Error.MultipleDefinitions(
                 self,
-                "Workflow has multiple calls named {}; give calls distinct names using `call {} as NAME ...`".format(
-                    self.name, self.callee.name
-                ),
+                f"Workflow has multiple calls named {self.name}; give calls distinct names using `call {self.callee.name} as NAME ...`",
             )
         # add a dummy _present binding to ensure the namespace exists even if callee has no outputs
         return Env.merge(
@@ -680,7 +668,7 @@ class Call(WorkflowNode):
 
     def typecheck_input(
         self,
-        struct_types: Env.Bindings[Dict[str, Type.Base]],
+        struct_types: Env.Bindings[dict[str, Type.Base]],
         type_env: Env.Bindings[Type.Base],
         stdlib: StdLib.Base,
         check_quant: bool,
@@ -699,7 +687,7 @@ class Call(WorkflowNode):
                 raise Error.NoSuchCall(self, call_after)
 
         # Make a set of the input names which are required for this call
-        required_inputs = set(decl.name for decl in self.callee.required_inputs)
+        required_inputs = {decl.name for decl in self.callee.required_inputs}
 
         # typecheck call inputs against task/workflow input declarations
         with Error.multi_context() as errors:
@@ -722,8 +710,7 @@ class Call(WorkflowNode):
                     )
                 except KeyError:
                     errors.append(Error.NoSuchInput(expr, name))
-                if name in required_inputs:
-                    required_inputs.remove(name)
+                required_inputs.discard(name)
         assert (not required_inputs) == (not list(self.required_inputs))
         return not required_inputs
 
@@ -815,20 +802,20 @@ class Gather(WorkflowNode):
     The ``Scatter``/``Conditional`` section implying this Gather operation
     """
 
-    referee: "Union[Decl, Call, Gather]"
+    referee: "Decl | Call | Gather"
     """
-    :type: Union[Decl, Call, Gather]
+    :type: Decl | Call | Gather
 
     The ``Decl``, ``Call``, or sub-``Gather`` node from which this operation "gathers"
     """
 
-    def __init__(self, section: "WorkflowSection", referee: "Union[Decl, Call, Gather]") -> None:
+    def __init__(self, section: "WorkflowSection", referee: "Decl | Call | Gather") -> None:
         super().__init__("gather-" + referee.workflow_node_id, referee.pos)
         self.section = section
         self.referee = referee
 
     def add_to_type_env(
-        self, struct_types: Env.Bindings[Dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
+        self, struct_types: Env.Bindings[dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
     ) -> Env.Bindings[Type.Base]:
         raise NotImplementedError()
 
@@ -842,7 +829,7 @@ class Gather(WorkflowNode):
         return []
 
     @property
-    def final_referee(self) -> Union[Decl, Call]:
+    def final_referee(self) -> Decl | Call:
         """
         The ``Decl`` or ``Call`` node found at the end of the referee chain through any nested
         ``Gather`` nodes
@@ -859,15 +846,15 @@ class WorkflowSection(WorkflowNode):
     Base class for workflow nodes representing scatter and conditional sections
     """
 
-    body: List[WorkflowNode]
+    body: list[WorkflowNode]
     """
-    :type: List[WorkflowNode]
+    :type: list[WorkflowNode]
 
     Section body, potentially including nested sections.
     """
-    gathers: Dict[str, Gather]
+    gathers: dict[str, Gather]
     """
-    :type: Dict[str, Gather]
+    :type: dict[str, Gather]
 
     ``Gather`` nodes exposing the section body's products to the rest of the workflow. The dict is
     keyed by ``workflow_node_id`` of the interior node, to expedite looking up the corresponding
@@ -878,7 +865,7 @@ class WorkflowSection(WorkflowNode):
     upon visiting the section node at runtime.
     """
 
-    _type_env: Optional[Env.Bindings[Type.Base]] = None
+    _type_env: Env.Bindings[Type.Base] | None = None
     """
     After typechecking: the type environment, INSIDE the section, consisting of
     - everything available outside of the section
@@ -887,12 +874,12 @@ class WorkflowSection(WorkflowNode):
     - the scatter variable, if applicable
     """
 
-    def __init__(self, body: List[WorkflowNode], *args, **kwargs):
+    def __init__(self, body: list[WorkflowNode], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.body = body
         # TODO: add dependency on self to each body node?
         # populate gathers
-        self.gathers = dict()
+        self.gathers = {}
         for elt in self.body:
             if isinstance(elt, (Decl, Call)):
                 # assert elt.workflow_node_id not in self.gathers
@@ -935,9 +922,9 @@ class Scatter(WorkflowSection):
     Expression for the array over which to scatter"""
 
     def __init__(
-        self, pos: SourcePosition, variable: str, expr: Expr.Base, body: List[WorkflowNode]
+        self, pos: SourcePosition, variable: str, expr: Expr.Base, body: list[WorkflowNode]
     ) -> None:
-        super().__init__(body, "scatter-L{}C{}-{}".format(pos.line, pos.column, variable), pos)
+        super().__init__(body, f"scatter-L{pos.line}C{pos.column}-{variable}", pos)
         self.variable = variable
         self.expr = expr
 
@@ -952,7 +939,7 @@ class Scatter(WorkflowSection):
         yield from super().children
 
     def add_to_type_env(
-        self, struct_types: Env.Bindings[Dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
+        self, struct_types: Env.Bindings[dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
     ) -> Env.Bindings[Type.Base]:
         # Add declarations and call outputs in this section as they'll be
         # available outside of the section (i.e. a declaration of type T is
@@ -1009,8 +996,8 @@ class Conditional(WorkflowSection):
 
     Boolean expression"""
 
-    def __init__(self, pos: SourcePosition, expr: Expr.Base, body: List[WorkflowNode]) -> None:
-        super().__init__(body, "if-L{}C{}".format(pos.line, pos.column), pos)
+    def __init__(self, pos: SourcePosition, expr: Expr.Base, body: list[WorkflowNode]) -> None:
+        super().__init__(body, f"if-L{pos.line}C{pos.column}", pos)
         # TODO: add to id the name of 'shallowest' (closest to root) ident in expr
         self.expr = expr
 
@@ -1021,7 +1008,7 @@ class Conditional(WorkflowSection):
         yield from super().children
 
     def add_to_type_env(
-        self, struct_types: Env.Bindings[Dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
+        self, struct_types: Env.Bindings[dict[str, Type.Base]], type_env: Env.Bindings[Type.Base]
     ) -> Env.Bindings[Type.Base]:
         # Add declarations and call outputs in this section as they'll be
         # available outside of the section (i.e. a declaration of type T is
@@ -1067,36 +1054,36 @@ class Conditional(WorkflowSection):
 class Workflow(SourceNode):
     name: str
     ":type: str"
-    inputs: Optional[List[Decl]]
-    """:type: List[WDL.Tree.Decl]
+    inputs: list[Decl] | None
+    """:type: list[WDL.Tree.Decl]
 
     Declarations in the ``input{}`` workflow section, if it's present"""
-    body: List[WorkflowNode]
-    """:type: List[Union[WDL.Tree.Decl,WDL.Tree.Call,WDL.Tree.Scatter,WDL.Tree.Conditional]]
+    body: list[WorkflowNode]
+    """:type: list[WDL.Tree.Decl | WDL.Tree.Call | WDL.Tree.Scatter | WDL.Tree.Conditional]
 
     Workflow body in between ``input{}`` and ``output{}`` sections, if any
     """
-    outputs: Optional[List[Decl]]
-    """:type: Optional[List[WDL.Tree.Decl]]
+    outputs: list[Decl] | None
+    """:type: list[WDL.Tree.Decl] | None
 
     Workflow output declarations, if the ``output{}`` section is present"""
     # following two fields temporarily hold old-style (pre 1.0) outputs with
     # bare identifiers or namespace wildcards. We postprocess them into
     # full declarations as expected in WDL 1.0+.
-    _output_idents: List[List[str]]
-    _output_idents_pos: Optional[Error.SourcePosition]
-    parameter_meta: Dict[str, Any]
+    _output_idents: list[list[str]]
+    _output_idents_pos: Error.SourcePosition | None
+    parameter_meta: dict[str, Any]
     """
-    :type: Dict[str,Any]
+    :type: dict[str,Any]
 
     ``parameter_meta{}`` section as a JSON-like dict"""
-    meta: Dict[str, Any]
+    meta: dict[str, Any]
     """
-    :type: Dict[str,Any]
+    :type: dict[str,Any]
 
     ``meta{}`` section as a JSON-like dict"""
 
-    _type_env: Optional[Env.Bindings[Type.Base]] = None
+    _type_env: Env.Bindings[Type.Base] | None = None
     """
     After typechecking: the type environment in the main workflow body,
     - declarations at the top level of the workflow body
@@ -1111,7 +1098,7 @@ class Workflow(SourceNode):
     all required inputs (and thus cannot be called from another workflow).
     """
 
-    _nodes_by_id: Dict[str, WorkflowNode]  # memoizer
+    _nodes_by_id: dict[str, WorkflowNode]  # memoizer
 
     effective_wdl_version: str
     """:type: str
@@ -1123,13 +1110,13 @@ class Workflow(SourceNode):
         self,
         pos: SourcePosition,
         name: str,
-        inputs: Optional[List[Decl]],
-        body: List[WorkflowNode],
-        outputs: Optional[List[Decl]],
-        parameter_meta: Dict[str, Any],
-        meta: Dict[str, Any],
-        output_idents: Optional[List[List[str]]] = None,
-        output_idents_pos: Optional[SourcePosition] = None,
+        inputs: list[Decl] | None,
+        body: list[WorkflowNode],
+        outputs: list[Decl] | None,
+        parameter_meta: dict[str, Any],
+        meta: dict[str, Any],
+        output_idents: list[list[str]] | None = None,
+        output_idents_pos: SourcePosition | None = None,
     ) -> None:
         super().__init__(pos)
         self.name = name
@@ -1236,8 +1223,7 @@ class Workflow(SourceNode):
         """"""
         for d in self.inputs or []:
             yield d
-        for elt in self.body:
-            yield elt
+        yield from self.body
         for d in self.outputs or []:
             yield d
 
@@ -1277,7 +1263,7 @@ class Workflow(SourceNode):
                 self._rewrite_output_idents()
             # 5. typecheck the output expressions
             if self.outputs:
-                output_names: Set[str] = set()
+                output_names: set[str] = set()
                 output_type_env = self._type_env
                 assert output_type_env is not None
                 for output in self.outputs:
@@ -1428,22 +1414,25 @@ class Workflow(SourceNode):
         return "\n".join(source_lines).strip()
 
 
-SourceComment = NamedTuple("SourceComment", [("pos", Error.SourcePosition), ("text", str)])
+class SourceComment(NamedTuple):
+    pos: Error.SourcePosition
+    text: str
+
+
 """
 Position and text of a comment. The text includes the ``#`` and any preceding or trailing
 spaces/tabs.
 """
 
-DocImport = NamedTuple(
-    "DocImport",
-    [
-        ("pos", Error.SourcePosition),
-        ("uri", str),
-        ("namespace", str),
-        ("aliases", List[Tuple[str, str]]),
-        ("doc", "Optional[Document]"),
-    ],
-)
+
+class DocImport(NamedTuple):
+    pos: Error.SourcePosition
+    uri: str
+    namespace: str
+    aliases: list[tuple[str, str]]
+    doc: "Document | None"
+
+
 """
 Represents one imported document, with position of the import statement, import URI, namespace,
 struct type aliases, and (after typechecking) the ``Document`` object.
@@ -1463,26 +1452,26 @@ class Document(SourceNode):
     Original WDL source code text
     """
 
-    source_lines: List[str]
+    source_lines: list[str]
     """
-    :type: List[str]
+    :type: list[str]
 
     Original WDL source code text split by newlines. ``SourcePosition`` line numbers are
     one-based, so line number ``L`` corresponds to ``source_lines[L-1]``.
     """
 
-    source_comments: List[Optional[SourceComment]]
+    source_comments: list[SourceComment | None]
     """
-    :type: List[Optional[SourceComment]]
+    :type: list[SourceComment | None]
 
     Lookup table for source code comments. ``source_comments`` has the same length as
     ``source_lines``, and each entry is the :class:`WDL.Tree.SourceComment` found on the
     corresponding source line, or ``None`` if the line has no comment.
     """
 
-    wdl_version: Optional[str]
+    wdl_version: str | None
     """
-    :type: Optional[str]
+    :type: str | None
 
     Declared WDL language version, if any
     """
@@ -1494,32 +1483,32 @@ class Document(SourceNode):
     ``wdl_version if wdl_version is not None else "draft-2"``
     """
 
-    imports: List[DocImport]
+    imports: list[DocImport]
     """
-    :type: List[DocImport]
+    :type: list[DocImport]
 
     Imported documents"""
     struct_typedefs: Env.Bindings[StructTypeDef]
     """:type: Env.Bindings[WDL.Tree.StructTypeDef]"""
 
-    _struct_types: Env.Bindings[Dict[str, Type.Base]]
+    _struct_types: Env.Bindings[dict[str, Type.Base]]
     # simpler mapping of struct names to their members, used for typechecking ops
 
-    tasks: List[Task]
-    """:type: List[WDL.Tree.Task]"""
-    workflow: Optional[Workflow]
-    """:type: Optional[WDL.Tree.Workflow]"""
+    tasks: list[Task]
+    """:type: list[WDL.Tree.Task]"""
+    workflow: Workflow | None
+    """:type: WDL.Tree.Workflow | None"""
 
     def __init__(
         self,
         source_text: str,
         pos: SourcePosition,
-        imports: List[DocImport],
-        struct_typedefs: Dict[str, StructTypeDef],
-        tasks: List[Task],
-        workflow: Optional[Workflow],
-        comments: List[SourceComment],
-        wdl_version: Optional[str],
+        imports: list[DocImport],
+        struct_typedefs: dict[str, StructTypeDef],
+        tasks: list[Task],
+        workflow: Workflow | None,
+        comments: list[SourceComment],
+        wdl_version: str | None,
     ) -> None:
         super().__init__(pos)
         self.imports = imports
@@ -1552,8 +1541,7 @@ class Document(SourceNode):
         for stb in self.struct_typedefs:
             assert isinstance(stb, Env.Binding) and isinstance(stb.value, StructTypeDef)
             yield stb.value
-        for task in self.tasks:
-            yield task
+        yield from self.tasks
         if self.workflow:
             yield self.workflow
 
@@ -1600,15 +1588,15 @@ class Document(SourceNode):
             self.workflow.typecheck(self, check_quant=check_quant)
 
 
-async def resolve_file_import(uri: str, path: List[str], importer: Optional[Document]) -> str:
-    if uri.startswith("http://") or uri.startswith("https://"):
+async def resolve_file_import(uri: str, path: list[str], importer: Document | None) -> str:
+    if uri.startswith(("http://", "https://")):
         # for now we do nothing with web URIs
         return uri
     if uri.startswith("file:///"):
         uri = uri[7:]
     if os.path.isabs(uri):
         # given an already-absolute filename, just normalize it
-        ans: Optional[str] = os.path.abspath(uri)
+        ans: str | None = os.path.abspath(uri)
     else:
         # resolving a relative import: before searching the user-provided path directories, try the
         # directory of the importing document (if any), or the current working directory
@@ -1627,27 +1615,28 @@ async def resolve_file_import(uri: str, path: List[str], importer: Optional[Docu
     raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), uri)
 
 
-ReadSourceResult = NamedTuple("ReadSourceResult", [("source_text", str), ("abspath", str)])
+class ReadSourceResult(NamedTuple):
+    source_text: str
+    abspath: str
 
 
 async def read_source_default(
-    uri: str, path: List[str], importer: Optional[Document]
+    uri: str, path: list[str], importer: Document | None
 ) -> ReadSourceResult:
     abspath = await resolve_file_import(uri, path, importer)
     # TODO: actual async read
-    with open(abspath, "r") as infile:
+    with open(abspath, "r") as infile:  # noqa: ASYNC230
         return ReadSourceResult(source_text=infile.read(), abspath=abspath)
 
 
 async def _load_async(
     uri: str,
-    path: Optional[List[str]] = None,
+    path: list[str] | None = None,
     check_quant: bool = True,
-    read_source: Optional[
-        Callable[[str, List[str], Optional[Document]], Awaitable[ReadSourceResult]]
-    ] = None,
+    read_source: Callable[[str, list[str], Document | None], Awaitable[ReadSourceResult]]
+    | None = None,
     import_max_depth: int = 10,
-    importer: Optional[Document] = None,
+    importer: Document | None = None,
 ) -> Document:
     path = list(path) if path is not None else []
     read_source = read_source or read_source_default
@@ -1698,19 +1687,18 @@ async def _load_async(
                 exn1.declared_wdl_version = doc.wdl_version
         multi.source_text = read_rslt.source_text
         multi.declared_wdl_version = doc.wdl_version
-        raise multi
+        raise
     return doc
 
 
 def _load(
     uri: str,
-    path: Optional[List[str]] = None,
+    path: list[str] | None = None,
     check_quant: bool = True,
-    read_source: Optional[
-        Callable[[str, List[str], Optional[Document]], Awaitable[ReadSourceResult]]
-    ] = None,
+    read_source: Callable[[str, list[str], Document | None], Awaitable[ReadSourceResult]]
+    | None = None,
     import_max_depth: int = 10,
-    importer: Optional[Document] = None,
+    importer: Document | None = None,
 ) -> Document:
     return asyncio.run(
         _load_async(
@@ -1729,7 +1717,7 @@ def _load(
 #
 
 
-def _calls(element: Union[Workflow, WorkflowSection]) -> Generator[Call, None, None]:
+def _calls(element: Workflow | WorkflowSection) -> Generator[Call, None, None]:
     # Yield each Call in the workflow, including those nested within scatter/conditional sections
     for ch in element.children:
         if isinstance(ch, Call):
@@ -1738,7 +1726,7 @@ def _calls(element: Union[Workflow, WorkflowSection]) -> Generator[Call, None, N
             yield from _calls(ch)
 
 
-def _uncallable_reasons(wf: Workflow) -> List[str]:
+def _uncallable_reasons(wf: Workflow) -> list[str]:
     # Explain why wf can't be used as a subworkflow, for Error.UncallableWorkflow
     reasons = []
     if wf.outputs is None and wf.effective_outputs:
@@ -1774,8 +1762,8 @@ def _build_workflow_type_env(
     doc: Document,
     stdlib: StdLib.Base,
     check_quant: bool,
-    self: Optional[Union[Workflow, WorkflowSection]] = None,
-    outer_type_env: Optional[Env.Bindings[Type.Base]] = None,
+    self: Workflow | WorkflowSection | None = None,
+    outer_type_env: Env.Bindings[Type.Base] | None = None,
 ) -> None:
     # Populate each Workflow, Scatter, and Conditional object with its
     # _type_env attribute containing the type environment available in the body
@@ -1865,9 +1853,7 @@ def _build_workflow_type_env(
             elif not isinstance(self, Workflow):
                 raise Error.StrayInputDeclaration(
                     self,
-                    "unbound non-optional declaration {} {} inside scatter/conditional section".format(
-                        str(child.type), child.name
-                    ),
+                    f"unbound non-optional declaration {child.type!s} {child.name} inside scatter/conditional section",
                 )
 
     # finally, populate self._type_env with all our children
@@ -1880,7 +1866,7 @@ def _typecheck_workflow_body(
     doc: Document,
     stdlib: StdLib.Base,
     check_quant: bool,
-    self: Optional[Union[Workflow, WorkflowSection]] = None,
+    self: Workflow | WorkflowSection | None = None,
 ) -> bool:
     # following _resolve_calls() and _build_workflow_type_env(), typecheck all
     # the declaration expressions and call inputs
@@ -1973,7 +1959,7 @@ def _translate_struct_mismatch(doc: Document, stmt: Callable[[], Any]) -> Callab
     return f
 
 
-def _expr_workflow_node_dependencies(expr: Optional[Expr.Base]) -> Iterable[str]:
+def _expr_workflow_node_dependencies(expr: Expr.Base | None) -> Iterable[str]:
     # Given some Expr within a workflow, yield the workflow node IDs of the referees of each
     # Expr.Ident subexpression. These referees can include
     #   - Decl: reference to a named value
@@ -1991,12 +1977,12 @@ def _expr_workflow_node_dependencies(expr: Optional[Expr.Base]) -> Iterable[str]
         yield from _expr_workflow_node_dependencies(ch)
 
 
-def _decl_dependency_matrix(decls: List[Decl]) -> Tuple[Dict[str, Decl], _util.AdjM[str]]:
+def _decl_dependency_matrix(decls: list[Decl]) -> tuple[dict[str, Decl], _util.AdjM[str]]:
     # Given decls (e.g. in a task), produce mapping of workflow node id to the objects, and the
     # AdjM of their dependencies (edge from o1 to o2 = o2 depends on o1)
     # IGNORES dependencies that aren't among decls to begin with (the task runtime omits decls that
     # are supplied/overriden by runtime inputs)
-    objs_by_id = dict((decl.workflow_node_id, decl) for decl in decls)
+    objs_by_id = {decl.workflow_node_id: decl for decl in decls}
     assert len(objs_by_id) == len(decls)
     adj: _util.AdjM = _util.AdjM()
 
@@ -2013,7 +1999,7 @@ def _decl_dependency_matrix(decls: List[Decl]) -> Tuple[Dict[str, Decl], _util.A
 
 def _workflow_dependency_matrix(
     workflow: Workflow,
-) -> Tuple[Dict[str, WorkflowNode], _util.AdjM[str]]:
+) -> tuple[dict[str, WorkflowNode], _util.AdjM[str]]:
     # Given workflow, produce mapping of workflow node id to each node, and the AdjM of their
     # dependencies (edge from o1 to o2 = o2 depends on o1). Considers each Scatter and Conditional
     # node a dependency of each of its body nodes.
@@ -2043,7 +2029,7 @@ def _workflow_dependency_matrix(
     return (objs_by_id, adj)
 
 
-def _detect_cycles(p: Tuple[Dict[str, WorkflowNode], _util.AdjM[str]]) -> None:
+def _detect_cycles(p: tuple[dict[str, WorkflowNode], _util.AdjM[str]]) -> None:
     # given the result of _dependency_matrix, detect if there exists a cycle
     # and if so, then raise WDL.Error.CircularDependencies with a relevant
     # SourceNode.
@@ -2070,9 +2056,7 @@ def _import_structs(doc: Document):
             if alias in imported_structs:
                 raise Error.MultipleDefinitions(
                     imp.pos,
-                    "struct type alias {} collides with another struct type in the imported document".format(
-                        alias
-                    ),
+                    f"struct type alias {alias} collides with another struct type in the imported document",
                 )
             try:
                 collider = doc.struct_typedefs[alias]
@@ -2120,7 +2104,7 @@ def _import_structs(doc: Document):
 def _resolve_struct_type(
     pos: Error.SourcePosition,
     ty: Type.StructInstance,
-    struct_types: Env.Bindings[Dict[str, Type.Base]],
+    struct_types: Env.Bindings[dict[str, Type.Base]],
 ):
     # On initial document construction, WDL.Type.StructInstance is not yet resolved to the struct
     # type definition. Here, we populate 'members' with the dict of member types and names given
@@ -2140,8 +2124,8 @@ def _resolve_struct_type(
 def _resolve_struct_types(
     pos: Error.SourcePosition,
     ty: Type.Base,
-    struct_types: Env.Bindings[Dict[str, Type.Base]],
-    members_dict_ids: Optional[List[int]] = None,
+    struct_types: Env.Bindings[dict[str, Type.Base]],
+    members_dict_ids: list[int] | None = None,
 ):
     members_dict_ids = members_dict_ids or []
     # resolve all StructInstance within a potentially compound type
@@ -2156,7 +2140,7 @@ def _resolve_struct_types(
 
 
 def _initialize_struct_typedefs(
-    struct_typedefs: Env.Bindings[StructTypeDef], struct_types: Env.Bindings[Dict[str, Type.Base]]
+    struct_typedefs: Env.Bindings[StructTypeDef], struct_types: Env.Bindings[dict[str, Type.Base]]
 ):
     # bootstrap struct typechecking: resolve all StructInstance members of the
     # struct types; also detect & error circular struct definitions
@@ -2195,28 +2179,27 @@ def _check_serializable_map_keys(t: Type.Base, name: str, node: SourceNode) -> N
         if not kt.coerces(Type.String()) or not Type.String().coerces(kt):
             raise Error.ValidationError(
                 node,
-                f"{str(t)} may not be used in input/output {name} because the keys cannot be written to/from JSON",
+                f"{t!s} may not be used in input/output {name} because the keys cannot be written to/from JSON",
             )
     for p in t.parameters:
         _check_serializable_map_keys(p, name, node)
 
 
-def _describe_struct_types(exe: Union[Task, Workflow]) -> Dict[str, str]:
+def _describe_struct_types(exe: Task | Workflow) -> dict[str, str]:
     """
     Traverse the task/workflow AST to find all struct types used; produce a mapping from struct
     name to its type_id (a string describing the struct's members, independent of the struct name,
     as the latter can differ across documents).
     """
     structs = {}
-    items: List[Any] = list(exe.children)
+    items: list[Any] = list(exe.children)
     while items:
         item = items.pop()
         if isinstance(item, Type.StructInstance):
             structs[item.type_name] = item.type_id
         elif isinstance(item, Type.Base):
             # descent into compound types so we'll cover e.g. Array[MyStructType]
-            for par_ty in item.parameters:
-                items.append(par_ty)
+            items.extend(item.parameters)
         elif isinstance(item, Expr.Base):
             # descent into expressions to find struct literals
             if isinstance(item, Expr.Struct):
@@ -2235,8 +2218,8 @@ def _describe_struct_types(exe: Union[Task, Workflow]) -> Dict[str, str]:
 
 
 def _source_excerpt(
-    doc: Document, pos: SourcePosition, literals: Optional[List[SourcePosition]] = None
-) -> List[str]:
+    doc: Document, pos: SourcePosition, literals: list[SourcePosition] | None = None
+) -> list[str]:
     """
     Excerpt the document's source lines indicated by pos : WDL.SourcePosition. Delete comments,
     blank lines, and leading/trailing whitespace from each line -- except those indicated by
@@ -2244,7 +2227,7 @@ def _source_excerpt(
     """
     literals = literals if literals else []
 
-    def clean(line: int, column: int = 1, end_column: Optional[int] = None) -> List[str]:
+    def clean(line: int, column: int = 1, end_column: int | None = None) -> list[str]:
         literal = next(
             (True for lit in literals if line >= lit.line and line <= lit.end_line), False
         )

@@ -1,13 +1,13 @@
 # NOTE: this file is excluded from coverage analysis since alternate container backends may not be
 #       available in the CI environment. To test locally: prove -v tests/udocker.t
+import logging
 import os
 import shlex
-import logging
 import subprocess
-from typing import List
 from contextlib import ExitStack
-from ...Error import InputError, RuntimeError
+
 from ..._util import StructuredLogMessage as _
+from ...Error import InputError, RuntimeError
 from .. import config
 from .cli_subprocess import SubprocessBase
 
@@ -23,10 +23,9 @@ class UdockerContainer(SubprocessBase):
         try:
             udocker_version = subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=True,
-                universal_newlines=True,
+                text=True,
             )
         except Exception:
             raise RuntimeError(f"Unable to check `{' '.join(cmd)}`; verify udocker installation")
@@ -42,10 +41,10 @@ class UdockerContainer(SubprocessBase):
         return "udocker"
 
     @property
-    def cli_exe(self) -> List[str]:
+    def cli_exe(self) -> list[str]:
         return self.cfg.get_list("udocker", "exe")
 
-    def _run_invocation(self, logger: logging.Logger, cleanup: ExitStack, image: str) -> List[str]:
+    def _run_invocation(self, logger: logging.Logger, cleanup: ExitStack, image: str) -> list[str]:
         """
         Formulate `udocker run` command-line invocation
         """
