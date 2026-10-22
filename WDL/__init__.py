@@ -24,6 +24,8 @@ from .Tree import (  # noqa: F401
     Decl,
     Document,
     Gather,
+    HintsObject,
+    IOHints,
     ReadSourceResult,
     Scatter,
     SourceComment,
@@ -253,6 +255,7 @@ def values_from_json(
                 for override in (
                     "requirements",
                     "runtime",
+                    "hints",
                 ):
                     runtime_idx = next(
                         (i for i, term in enumerate(key2parts) if term == override),
