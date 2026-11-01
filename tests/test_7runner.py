@@ -245,6 +245,70 @@ class TestErrorJson(unittest.TestCase):
         self.assertNotIn("cause", info)
 
 
+class TestConfigLoader(unittest.TestCase):
+    def test_percent_in_config_file_values(self):
+        # config values containing % must load literally; configparser's default
+        # interpolation used to raise InterpolationSyntaxError on them
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".cfg", delete=False
+        ) as cfgfile:
+            cfgfile.write('[task_runtime]\nenv = {"GREETING": "100%"}\n')
+            cfgfile.write("[file_io]\nnote = 100% coverage\n")
+            cfgfn = cfgfile.name
+        try:
+            cfg = WDL.runtime.config.Loader(logging.getLogger(self.id()), [cfgfn])
+            self.assertEqual(cfg["task_runtime"].get_dict("env"), {"GREETING": "100%"})
+            self.assertEqual(cfg["file_io"].get("note"), "100% coverage")
+        finally:
+            os.unlink(cfgfn)
+
+    def test_percent_in_override_values(self):
+        cfg = WDL.runtime.config.Loader(logging.getLogger(self.id()), [])
+        cfg.override({"task_runtime": {"env": {"GREETING": "100%"}}})
+        self.assertEqual(cfg["task_runtime"].get_dict("env"), {"GREETING": "100%"})
+
+
+class TestLocalize(unittest.TestCase):
+    def test_uses_cfg_and_no_cache(self):
+        # localize must run its dummy workflow with the config loaded from --cfg,
+        # including the --no-cache override, not a fresh default config
+        with tempfile.TemporaryDirectory() as dn:
+            cache_dir = os.path.join(dn, "download_cache")
+            cfgfn = os.path.join(dn, "miniwdl.cfg")
+            with open(cfgfn, mode="w") as cfgfile:
+                cfgfile.write(
+                    textwrap.dedent(
+                        f"""\
+                        [download_cache]
+                        put = true
+                        get = true
+                        dir = {cache_dir}
+                        """
+                    )
+                )
+
+            captured = {}
+
+            def fake_run(cfg, target, inputs, run_dir=None):
+                captured["cfg"] = cfg
+                return (run_dir, WDL.Env.Bindings())
+
+            with patch.object(WDL.runtime, "run", side_effect=fake_run):
+                WDL.CLI.localize(
+                    file=["https://example.org/file.txt"],
+                    cfg=cfgfn,
+                    no_cache=True,
+                    verbose=False,
+                    debug=False,
+                    no_color=False,
+                    log_json=False,
+                )
+
+            self.assertIn("cfg", captured)
+            self.assertEqual(captured["cfg"]["download_cache"]["dir"], cache_dir)
+            self.assertFalse(captured["cfg"]["download_cache"].get_bool("get"))
+
+
 class TestDirectoryIO(RunnerTestCase):
     def test_coercion(self):
         assert WDL.Type.Directory().coerces(WDL.Type.String())
