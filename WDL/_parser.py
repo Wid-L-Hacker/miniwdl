@@ -810,10 +810,38 @@ def parse_expr(txt: str, version: str | None = None) -> Expr.Base:
                 version,
                 None,
             ) from None
+        if isinstance(exn2, RecursionError):
+            raise Error.SyntaxError(
+                SourcePosition(
+                    uri="(buffer)",
+                    abspath="(buffer)",
+                    line=0,
+                    column=0,
+                    end_line=0,
+                    end_column=0,
+                ),
+                "expression is too deeply nested",
+                version,
+                None,
+            ) from None
         # attach WDL version info to all parser exceptions (not just SyntaxError)
         setattr(exn2, "wdl_version", version)
         setattr(exn2, "declared_wdl_version", None)
         raise exn2 from None
+    except RecursionError:
+        raise Error.SyntaxError(
+            SourcePosition(
+                uri="(buffer)",
+                abspath="(buffer)",
+                line=0,
+                column=0,
+                end_line=0,
+                end_column=0,
+            ),
+            "expression is too deeply nested",
+            version,
+            None,
+        ) from None
 
 
 def _parse_doctransformer(
@@ -864,10 +892,18 @@ def _parse_doctransformer(
                 version,
                 declared_version,
             ) from None
+        if isinstance(exn2, RecursionError):
+            raise Error.SyntaxError(
+                npos, "document is too deeply nested", version, declared_version
+            ) from None
         # attach WDL version info to all parser exceptions (not just SyntaxError)
         setattr(exn2, "wdl_version", version)
         setattr(exn2, "declared_wdl_version", declared_version)
         raise exn2 from None
+    except RecursionError:
+        raise Error.SyntaxError(
+            npos, "document is too deeply nested", version, declared_version
+        ) from None
 
 
 def parse_tasks(txt: str, version: str | None = None) -> list[Tree.Task]:

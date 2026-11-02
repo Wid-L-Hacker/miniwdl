@@ -1,5 +1,26 @@
-import unittest, tempfile, os, pickle
+import unittest, tempfile, os, pickle, sys
 from .context import WDL
+
+class TestDeepNesting(unittest.TestCase):
+    def test_deeply_nested_inputs_raise_syntax_error(self):
+        # artificially lower the recursion limit so modest nesting trips it;
+        # the parser must translate RecursionError into a WDL syntax error
+        # instead of leaking the interpreter exception
+        old_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(500)
+        try:
+            with self.assertRaises(WDL.Error.SyntaxError):
+                WDL.parse_expr("[" * 300 + "1" + "]" * 300)
+            doc = (
+                "version 1.1\nworkflow w {\n output {\n  Int x = "
+                + " + ".join(["1"] * 800)
+                + "\n }\n}\n"
+            )
+            with self.assertRaises(WDL.Error.SyntaxError):
+                WDL.parse_document(doc)
+        finally:
+            sys.setrecursionlimit(old_limit)
+
 
 class TestTasks(unittest.TestCase):
     def test_wc(self):
